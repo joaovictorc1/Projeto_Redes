@@ -1,0 +1,8 @@
+# Arquivos gerados pelo script
+*.csv
+*.xlsx
+
+# Ambiente Python
+__pycache__/
+venv/
+*.pyc
