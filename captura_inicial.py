@@ -1,44 +1,41 @@
-from scapy.all import sniff, IP, TCP, UDP
-from collections import defaultdict
-import time
+from scapy.all import sniff, get_if_list
+import sys
 
-trafego = defaultdict(lambda: defaultdict(int))
-JANELA = 5
-inicio = time.time()
+def processa_pacote_simples(pacote):
+    print("--- Pacote Capturado! ---")
+    print(pacote.summary())
 
-def processa(pacote):
-    global inicio
-    if time.time() - inicio >= JANELA:
-        mostrar()
-        trafego.clear()
-        inicio = time.time()
-
-    if IP in pacote:
-        ip_origem = pacote[IP].src
-        ip_destino = pacote[IP].dst
-        if TCP in pacote:
-            proto = "TCP"
-        elif UDP in pacote:
-            proto = "UDP"
-        else:
-            proto = "Outro"
-        trafego[ip_origem][proto] += len(pacote)
-        trafego[ip_destino][proto] += len(pacote)
-
-def mostrar():
-    print("\n--- Janela ---")
-    for cliente, protos in trafego.items():
-        total = sum(protos.values())
-        print(f"{cliente} -> {total} bytes")
-        for p, b in protos.items():
-            print(f"   {p}: {b} bytes")
-
-def iniciar(interface=None):
-    print("Capturando pacotes... Ctrl+C para parar.")
-    sniff(iface=interface, prn=processa, store=False)
+def escolher_interface():
+    print("Detectando interfaces de rede...")
+    try:
+        from scapy.arch.windows import get_windows_if_list
+        interfaces = get_windows_if_list()
+        for i, iface in enumerate(interfaces):
+            print(f"{i}: {iface['name']} ({iface.get('description', 'N/A')})")
+        escolha = int(input("Digite o número da interface: "))
+        return interfaces[escolha]['name']
+    except (ImportError, KeyError):
+        interfaces = get_if_list()
+        for i, iface in enumerate(interfaces):
+            print(f"{i}: {iface}")
+        escolha = int(input("Digite o número da interface: "))
+        return interfaces[escolha]
+    except (ValueError, IndexError):
+        print("[ERRO] Escolha inválida. Saindo.")
+        sys.exit(1)
 
 if __name__ == "__main__":
+    interface = escolher_interface()
+    print(f"\nIniciando captura na interface: {interface}")
+    print("Capturando os próximos 5 pacotes... (Ctrl+C para parar)")
+
     try:
-        iniciar()
+        sniff(iface=interface, prn=processa_pacote_simples, count=5, store=False)
+    except PermissionError:
+        print("\n[ERRO] Permissão negada. Execute como Administrador/root.")
+    except OSError as e:
+        print(f"\n[ERRO] Erro ao usar a interface '{interface}': {e}")
     except KeyboardInterrupt:
-        print("\nFim da captura.")
+        print("\nCaptura interrompida.")
+
+    print("\n--- Fim da Captura da Fase 1 ---")
