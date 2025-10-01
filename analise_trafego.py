@@ -1,102 +1,112 @@
-# Importações necessárias
-from scapy.all import sniff, get_if_list, IP, TCP, UDP
+from scapy.all import sniff, get_if_list, IP
 import sys
+import time
+from collections import defaultdict
+import os
 import csv
 from datetime import datetime
 
-SERVER_IP = "192.168.1.27"
-ARQUIVO_CSV = "captura.csv"
+# --- Configurações ---
+SERVER_IP = "192.168.1.27" 
+JANELA_SEGUNDOS = 5
+ARQUIVO_CSV = "analise_trafego.csv"
 
-# --- FUNÇÃO PARA INICIALIZAR O CSV ---
+# --- Estrutura de Dados ---
+# Dicionário para guardar os dados agregados da janela atual
+# Formato: { 'ip_cliente': {'ENTRADA': X, 'SAÍDA': Y} }
+dados_janela = defaultdict(lambda: {'ENTRADA': 0, 'SAÍDA': 0})
+inicio_janela = time.time()
+
 def inicializar_csv():
-    """Cria o arquivo CSV com cabeçalho, caso ainda não exista."""
+    # Cria o arquivo CSV com cabeçalho, se ele não existir
     try:
         with open(ARQUIVO_CSV, "x", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["timestamp", "direcao", "client_ip", "protocolo", "tamanho"])
-        print(f"[INFO] Arquivo CSV '{ARQUIVO_CSV}' criado.")
+            writer.writerow(["timestamp", "client_ip", "traffic_in_bytes", "traffic_out_bytes"])
     except FileExistsError:
-        print(f"[INFO] Arquivo CSV '{ARQUIVO_CSV}' já existe, dados serão adicionados.")
+        pass # O arquivo já existe, não faz nada
 
-# --- FUNÇÃO DE PROCESSAMENTO DE PACOTE ---
-def processa_pacote_analise(pacote):
-    """Analisa pacotes e salva no CSV apenas os relevantes para o servidor alvo."""
+def processa_pacote(pacote):
+    global inicio_janela
+    
+    # Verifica se a janela de tempo acabou
+    if time.time() - inicio_janela > JANELA_SEGUNDOS:
+        salvar_e_resetar_janela()
+
+    # Filtra pacotes irrelevantes
     if not pacote.haslayer(IP) or (pacote[IP].src != SERVER_IP and pacote[IP].dst != SERVER_IP):
         return
 
-    # Dados principais
+    # Agrega os dados
     ip_origem = pacote[IP].src
-    ip_destino = pacote[IP].dst
     tamanho_pacote = len(pacote)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Direção
+    
     if ip_origem == SERVER_IP:
-        direcao = "SAÍDA"
-        client_ip = ip_destino
+        client_ip = pacote[IP].dst
+        dados_janela[client_ip]['SAÍDA'] += tamanho_pacote
     else:
-        direcao = "ENTRADA"
         client_ip = ip_origem
+        dados_janela[client_ip]['ENTRADA'] += tamanho_pacote
 
-    # Protocolo
-    if pacote.haslayer(TCP):
-        protocolo = "TCP"
-    elif pacote.haslayer(UDP):
-        protocolo = "UDP"
+def salvar_e_resetar_janela():
+    global dados_janela, inicio_janela
+    
+    timestamp_fim_janela = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Salva os dados agregados no arquivo CSV
+    with open(ARQUIVO_CSV, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        for cliente, dados in dados_janela.items():
+            if dados['ENTRADA'] > 0 or dados['SAÍDA'] > 0:
+                writer.writerow([timestamp_fim_janela, cliente, dados['ENTRADA'], dados['SAÍDA']])
+
+    # Exibe no terminal para feedback
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print(f"--- Dados da janela encerrada às {timestamp_fim_janela} salvos em '{ARQUIVO_CSV}' ---")
+    if not dados_janela:
+        print("Nenhum tráfego relevante capturado.")
     else:
-        protocolo = "Outro"
+        for cliente, dados in sorted(dados_janela.items()):
+             print(f"Cliente: {cliente} | ENTRADA: {dados['ENTRADA']} bytes | SAÍDA: {dados['SAÍDA']} bytes")
+    
+    # Reseta para a próxima janela
+    dados_janela.clear()
+    inicio_janela = time.time()
 
-    # Exibir no terminal
-    print(f"[{timestamp}] [{direcao}] Cliente: {client_ip} | Protocolo: {protocolo} | Tamanho: {tamanho_pacote} bytes")
-
-    # Salvar no CSV
-    try:
-        with open(ARQUIVO_CSV, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([timestamp, direcao, client_ip, protocolo, tamanho_pacote])
-    except Exception as e:
-        print(f"[ERRO] Não foi possível escrever no CSV: {e}")
-
-# --- FUNÇÃO AUXILIAR PARA ESCOLHA DA INTERFACE ---
 def escolher_interface():
+    # (Função sem alterações)
     print("Detectando interfaces de rede...")
     try:
         from scapy.arch.windows import get_windows_if_list
-        interfaces_disponiveis = get_windows_if_list()
-        for i, iface in enumerate(interfaces_disponiveis):
+        interfaces = get_windows_if_list()
+        for i, iface in enumerate(interfaces):
             print(f"  {i}: {iface['name']} ({iface.get('description', 'N/A')})")
         escolha = int(input("Digite o NÚMERO da interface que você quer monitorar: "))
-        return interfaces_disponiveis[escolha]['name']
-    except (ImportError, KeyError, ValueError, IndexError):
-        print("[AVISO] Método alternativo para detectar interfaces...")
-        interfaces_disponiveis = get_if_list()
-        for i, iface_name in enumerate(interfaces_disponiveis):
+        return interfaces[escolha]['name']
+    except Exception:
+        interfaces = get_if_list()
+        for i, iface_name in enumerate(interfaces):
             print(f"  {i}: {iface_name}")
         try:
             escolha = int(input("Digite o NÚMERO da interface: "))
-            return interfaces_disponiveis[escolha]
+            return interfaces[escolha]
         except (ValueError, IndexError):
             print("[ERRO] Escolha inválida. Saindo.")
             sys.exit(1)
 
-# --- PONTO DE ENTRADA ---
 if __name__ == "__main__":
-    if SERVER_IP == "192.168.1.10":
-        print("[AVISO] O IP do servidor ainda é o padrão, altere para o seu IP real!")
-
     inicializar_csv()
     interface_selecionada = escolher_interface()
     
-    print(f"\nIniciando análise na interface: '{interface_selecionada}'")
-    print(f"Monitorando tráfego para o servidor: {SERVER_IP}")
-    print(f"Resultados sendo salvos em: {ARQUIVO_CSV}")
-    print("Pressione Ctrl+C para parar a captura...")
+    print(f"\nIniciando captura e agregação na interface: '{interface_selecionada}'...")
+    print(f"Salvando dados agregados a cada {JANELA_SEGUNDOS} segundos em '{ARQUIVO_CSV}'.")
+    print("Pressione Ctrl+C para parar.")
+    time.sleep(2)
 
     try:
-        sniff(iface=interface_selecionada, prn=processa_pacote_analise, store=False)
-    except PermissionError:
-        print("\n[ERRO] Permissão negada. Execute como Administrador/root.")
-    except OSError as e:
-        print(f"\n[ERRO] Não foi possível usar a interface '{interface_selecionada}'. Detalhes: {e}")
+        sniff(iface=interface_selecionada, prn=processa_pacote, store=False)
     except KeyboardInterrupt:
-        print("\n\n--- Fim da Captura da Fase 2 ---")
+        print("\n\n--- Captura finalizada. Salvando última janela de dados... ---")
+        salvar_e_resetar_janela()
+
+
