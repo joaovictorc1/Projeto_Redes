@@ -6,110 +6,115 @@ import os
 import csv
 from datetime import datetime
 
-# --- Configurations ---
-SERVER_IP = "192.168.1.27"  # Change to your server IP
-WINDOW_SECONDS = 5
-CSV_FILE = "trafego_final.csv"
+# --- Configurações ---
+SERVER_IP = "192.168.1.27" 
+JANELA_SEGUNDOS = 5
 
-# --- Data structure ---
-# Format: { 'client_ip': { 'PROTOCOL': {'IN': X, 'OUT': Y} } }
-window_data = defaultdict(lambda: defaultdict(lambda: {'IN': 0, 'OUT': 0}))
-window_start = time.time()
+# Constrói o caminho completo para o arquivo CSV
+diretorio_script = os.path.dirname(__file__)
+ARQUIVO_CSV = os.path.join(diretorio_script, "trafego_final.csv")
 
-def initialize_csv():
-    # Create CSV file with header if it doesn't exist
+# --- Estrutura de Dados ---
+dados_janela = defaultdict(lambda: defaultdict(lambda: {'ENTRADA': 0, 'SAÍDA': 0}))
+inicio_janela = time.time()
+
+def inicializar_csv():
     try:
-        with open(CSV_FILE, "x", newline="", encoding="utf-8") as f:
+        with open(ARQUIVO_CSV, "x", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["timestamp", "client_ip", "protocol", "traffic_in_bytes", "traffic_out_bytes"])
+            writer.writerow(["timestamp", "client_ip", "protocolo", "traffic_in_bytes", "traffic_out_bytes"])
     except FileExistsError:
-        pass
+        pass 
 
-def process_packet(packet):
-    global window_start
+def processa_pacote(pacote):
+    global inicio_janela
     
-    # Check if window time elapsed
-    if time.time() - window_start > WINDOW_SECONDS:
-        save_and_reset_window()
+    if time.time() - inicio_janela > JANELA_SEGUNDOS:
+        salvar_e_resetar_janela()
 
-    # Filter packets related to SERVER_IP
-    if not packet.haslayer(IP) or (packet[IP].src != SERVER_IP and packet[IP].dst != SERVER_IP):
+    if not pacote.haslayer(IP) or (pacote[IP].src != SERVER_IP and pacote[IP].dst != SERVER_IP):
         return
 
-    src_ip = packet[IP].src
-    dst_ip = packet[IP].dst
-    pkt_len = len(packet)
+    ip_origem = pacote[IP].src
+    ip_destino = pacote[IP].dst
+    tamanho_pacote = len(pacote)
 
-    if packet.haslayer(TCP):
-        protocol = "TCP"
-    elif packet.haslayer(UDP):
-        protocol = "UDP"
+    if pacote.haslayer(TCP):
+        protocolo = "TCP"
+    elif pacote.haslayer(UDP):
+        protocolo = "UDP"
     else:
-        protocol = "Other"
-
-    if src_ip == SERVER_IP:
-        client_ip = dst_ip
-        window_data[client_ip][protocol]['OUT'] += pkt_len
-    else:
-        client_ip = src_ip
-        window_data[client_ip][protocol]['IN'] += pkt_len
-
-def save_and_reset_window():
-    global window_data, window_start
+        protocolo = "Outro"
     
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        for client, protocols in window_data.items():
-            for proto, data in protocols.items():
-                if data['IN'] > 0 or data['OUT'] > 0:
-                    writer.writerow([timestamp, client, proto, data['IN'], data['OUT']])
-
-    # Clear console and print summary
-    os.system('cls' if os.name == 'nt' else 'clear')
-    print(f"--- Data window saved at {timestamp} to '{CSV_FILE}' ---")
-    if not window_data:
-        print("No relevant traffic captured.")
+    if ip_origem == SERVER_IP:
+        client_ip = ip_destino
+        dados_janela[client_ip][protocolo]['SAÍDA'] += tamanho_pacote
     else:
-        for client, protocols in sorted(window_data.items()):
-            for proto, data in protocols.items():
-                print(f"Client: {client} [{proto}] | IN: {data['IN']} B | OUT: {data['OUT']} B")
+        client_ip = ip_origem
+        dados_janela[client_ip][protocolo]['ENTRADA'] += tamanho_pacote
 
-    window_data.clear()
-    window_start = time.time()
+def salvar_e_resetar_janela():
+    global dados_janela, inicio_janela
+    
+    timestamp_fim_janela = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def choose_interface():
-    print("Detecting network interfaces...")
+    try:
+        with open(ARQUIVO_CSV, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            for cliente, protocolos in dados_janela.items():
+                for proto, dados in protocolos.items():
+                    if dados['ENTRADA'] > 0 or dados['SAÍDA'] > 0:
+                        writer.writerow([timestamp_fim_janela, cliente, proto, dados['ENTRADA'], dados['SAÍDA']])
+        
+        status_salvo = f"salvos em '{ARQUIVO_CSV}'"
+    except PermissionError:
+        status_salvo = "[AVISO] FALHA AO SALVAR! O arquivo CSV está aberto em outro programa (Excel?)."
+
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print(f"--- Dados da janela (às {timestamp_fim_janela}) {status_salvo} ---")
+    if not dados_janela:
+        print("Nenhum tráfego relevante capturado.")
+    else:
+        for cliente, protocolos in sorted(dados_janela.items()):
+             for proto, dados in protocolos.items():
+                print(f"Cliente: {cliente} [{proto}] | ENTRADA: {dados['ENTRADA']} B | SAÍDA: {dados['SAÍDA']} B")
+    
+    dados_janela.clear()
+    inicio_janela = time.time()
+
+def escolher_interface():
+    print("Detectando interfaces de rede...")
     try:
         from scapy.arch.windows import get_windows_if_list
         interfaces = get_windows_if_list()
         for i, iface in enumerate(interfaces):
             print(f"  {i}: {iface['name']} ({iface.get('description', 'N/A')})")
-        choice = int(input("Enter the NUMBER of the interface to monitor: "))
-        return interfaces[choice]['name']
+        escolha = int(input("Digite o NÚMERO da interface que você quer monitorar: "))
+        return interfaces[escolha]['name']
     except Exception:
         interfaces = get_if_list()
         for i, iface_name in enumerate(interfaces):
             print(f"  {i}: {iface_name}")
         try:
-            choice = int(input("Enter the NUMBER of the interface: "))
-            return interfaces[choice]
+            escolha = int(input("Digite o NÚMERO da interface: "))
+            return interfaces[escolha]
         except (ValueError, IndexError):
-            print("[ERROR] Invalid choice. Exiting.")
+            print("[ERRO] Escolha inválida. Saindo.")
             sys.exit(1)
 
 if __name__ == "__main__":
-    initialize_csv()
-    selected_interface = choose_interface()
+    inicializar_csv()
+    interface_selecionada = escolher_interface()
     
-    print(f"\nStarting capture on interface: '{selected_interface}'...")
-    print(f"Saving data every {WINDOW_SECONDS} seconds to '{CSV_FILE}'.")
-    print("Press Ctrl+C to stop.")
+    print(f"\n[INFO] O arquivo CSV será salvo em: {ARQUIVO_CSV}")
+    print(f"Iniciando captura na interface: '{interface_selecionada}'...")
+    print(f"Salvando dados a cada {JANELA_SEGUNDOS} segundos.")
+    print("Pressione Ctrl+C para parar.")
     time.sleep(2)
 
     try:
-        sniff(iface=selected_interface, prn=process_packet, store=False)
+        sniff(iface=interface_selecionada, prn=processa_pacote, store=False)
     except KeyboardInterrupt:
-        print("\n\n--- Capture stopped. Saving last data window... ---")
-        save_and_reset_window()
+        print("\n\n--- Captura finalizada. Salvando última janela de dados... ---")
+        salvar_e_resetar_janela()
+
