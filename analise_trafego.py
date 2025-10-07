@@ -22,7 +22,7 @@ def inicializar_csv():
     try:
         with open(ARQUIVO_CSV, "x", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["timestamp", "client_ip", "protocolo", "traffic_in_bytes", "traffic_out_bytes"])
+            writer.writerow(["Timestamp", "IP", "Protocolo", "Tráfego Entrada", "Tráfego Saída"])
     except FileExistsError:
         pass 
 
@@ -117,4 +117,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\n--- Captura finalizada. Salvando última janela de dados... ---")
         salvar_e_resetar_janela()
+
 
